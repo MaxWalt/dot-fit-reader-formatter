@@ -179,6 +179,61 @@ class TestFitReader(unittest.TestCase):
         for row, lap in zip(rows, TEST_LAPS):
             self.assertEqual(row["avg_power_w"], lap["avg_power"])
 
+    # ── Step / stride length ─────────────────────────────────────────────────
+
+    def test_stride_length_from_file(self):
+        """When avg_step_length is in the file, stride = step * 2."""
+        from fit_tool.fit_file_builder import FitFileBuilder
+        from fit_tool.profile.messages.file_id_message import FileIdMessage
+        from fit_tool.profile.messages.lap_message import LapMessage
+        from fit_tool.profile.profile_type import FileType
+        builder = FitFileBuilder(auto_define=True, min_string_size=50)
+        fid = FileIdMessage(); fid.type = FileType.ACTIVITY
+        builder.add(fid)
+        lap = LapMessage()
+        lap.total_elapsed_time = 600.0
+        lap.avg_speed = 4.0
+        lap.avg_cadence = 160
+        lap.avg_step_length = 1500  # mm → 1.5 m/step
+        builder.add(lap)
+        fit_file = builder.build()
+        tmp = tempfile.NamedTemporaryFile(suffix=".fit", delete=False)
+        tmp.close(); fit_file.to_file(tmp.name)
+        try:
+            rows = read_fit_file(tmp.name)
+            self.assertAlmostEqual(rows[0]["avg_step_length_m"],   1.5,  places=3)
+            self.assertAlmostEqual(rows[0]["avg_stride_length_m"], 3.0,  places=3)
+            self.assertFalse(rows[0]["step_length_derived"])
+        finally:
+            os.unlink(tmp.name)
+
+    def test_stride_length_derived_from_speed_cadence(self):
+        """When step_length absent, derive from speed / (cadence/60)."""
+        fit_path = build_fit_file([
+            {"elapsed_time": 600.0, "avg_speed": 4.0, "distance": 2400.0,
+             "avg_cadence": 160},
+        ])
+        try:
+            rows = read_fit_file(fit_path)
+            expected_step = 4.0 / (160 / 60)   # = 1.5 m
+            self.assertAlmostEqual(rows[0]["avg_step_length_m"],   expected_step,     places=3)
+            self.assertAlmostEqual(rows[0]["avg_stride_length_m"], expected_step * 2, places=3)
+            self.assertTrue(rows[0]["step_length_derived"])
+        finally:
+            os.unlink(fit_path)
+
+    def test_stride_length_none_without_cadence(self):
+        """Without cadence or step_length in file, both length fields are None."""
+        fit_path = build_fit_file([
+            {"elapsed_time": 600.0, "avg_speed": 4.0, "distance": 2400.0},
+        ])
+        try:
+            rows = read_fit_file(fit_path)
+            self.assertIsNone(rows[0]["avg_step_length_m"])
+            self.assertIsNone(rows[0]["avg_stride_length_m"])
+        finally:
+            os.unlink(fit_path)
+
     # ── Calories & Ascent ─────────────────────────────────────────────────────
 
     def test_calories_populated(self):

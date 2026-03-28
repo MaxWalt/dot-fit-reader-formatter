@@ -104,6 +104,12 @@ if has_data("avg_hr_bpm") or has_data("avg_cadence_rpm"):
             st.markdown("**Avg cadence per section (rpm / spm)**")
             st.bar_chart(df.set_index("section")["avg_cadence_rpm"])
 
+if has_data("avg_stride_length_m"):
+    col_sl, _ = st.columns(2)
+    with col_sl:
+        st.markdown("**Avg stride length per section (m)**")
+        st.bar_chart(df.set_index("section")["avg_stride_length_m"])
+
 # Row 3 — Power & Altitude (only if present)
 if has_data("avg_power_w") or has_data("avg_altitude_m"):
     col5, col6 = st.columns(2)
@@ -123,8 +129,8 @@ st.subheader("Section data")
 
 # Drop columns that are entirely null (not recorded in this file)
 df_view = df.dropna(axis=1, how="all")
-# Also drop the boolean distance_derived from the visible table
-df_view = df_view.drop(columns=["distance_derived"], errors="ignore")
+# Drop internal flag columns from the visible table
+df_view = df_view.drop(columns=["distance_derived", "step_length_derived"], errors="ignore")
 
 column_config = {
     "time_s":                  st.column_config.NumberColumn("Time (s)",          format="%.1f"),
@@ -138,9 +144,11 @@ column_config = {
     "avg_hr_bpm":              st.column_config.NumberColumn("Avg HR (bpm)",      format="%d"),
     "max_hr_bpm":              st.column_config.NumberColumn("Max HR (bpm)",      format="%d"),
     "min_hr_bpm":              st.column_config.NumberColumn("Min HR (bpm)",      format="%d"),
-    "avg_cadence_rpm":         st.column_config.NumberColumn("Avg cadence",       format="%d"),
-    "max_cadence_rpm":         st.column_config.NumberColumn("Max cadence",       format="%d"),
-    "avg_running_cadence_spm": st.column_config.NumberColumn("Avg run cad (spm)", format="%d"),
+    "avg_cadence_rpm":         st.column_config.NumberColumn("Avg cadence",        format="%d"),
+    "max_cadence_rpm":         st.column_config.NumberColumn("Max cadence",        format="%d"),
+    "avg_running_cadence_spm": st.column_config.NumberColumn("Avg run cad (spm)",  format="%d"),
+    "avg_step_length_m":       st.column_config.NumberColumn("Step length (m)",    format="%.3f"),
+    "avg_stride_length_m":     st.column_config.NumberColumn("Stride length (m)",  format="%.3f"),
     "avg_power_w":             st.column_config.NumberColumn("Avg power (W)",     format="%d"),
     "max_power_w":             st.column_config.NumberColumn("Max power (W)",     format="%d"),
     "normalized_power_w":      st.column_config.NumberColumn("NP (W)",            format="%d"),

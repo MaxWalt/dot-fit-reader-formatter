@@ -87,6 +87,25 @@ def read_fit_file(fit_path: str) -> list[dict]:
         # Running-specific: avg_running_cadence is strides/min (×2 = steps/min)
         avg_run_cadence = lap.get("avg_running_cadence")
 
+        # ── Step / stride length ─────────────────────────────────────────────
+        # avg_step_length from file is in mm; convert to metres.
+        # Stride = 2 steps (one full gait cycle).
+        # Fallback: derive step length from speed ÷ step_rate.
+        #   step_rate (steps/s) = avg_cadence (steps/min) / 60
+        #   step_length (m)     = avg_speed (m/s) / step_rate
+        raw_step_mm = lap.get("avg_step_length")
+        if raw_step_mm is not None and raw_step_mm > 0:
+            step_length_m  = raw_step_mm / 1000.0
+            step_derived   = False
+        elif avg_speed and avg_cadence and avg_cadence > 0:
+            step_length_m  = avg_speed / (avg_cadence / 60.0)
+            step_derived   = True
+        else:
+            step_length_m  = None
+            step_derived   = False
+
+        stride_length_m = step_length_m * 2 if step_length_m is not None else None
+
         # ── Power (cycling / running) ─────────────────────────────────────────
         avg_power        = lap.get("avg_power")
         max_power        = lap.get("max_power")
@@ -133,9 +152,13 @@ def read_fit_file(fit_path: str) -> list[dict]:
             "max_hr_bpm":         max_hr,
             "min_hr_bpm":         min_hr,
             # Cadence
-            "avg_cadence_rpm":    avg_cadence,
-            "max_cadence_rpm":    max_cadence,
+            "avg_cadence_rpm":         avg_cadence,
+            "max_cadence_rpm":         max_cadence,
             "avg_running_cadence_spm": avg_run_cadence,
+            # Step / stride length
+            "avg_step_length_m":       _r(step_length_m, 3),
+            "avg_stride_length_m":     _r(stride_length_m, 3),
+            "step_length_derived":     step_derived,
             # Power
             "avg_power_w":        avg_power,
             "max_power_w":        max_power,

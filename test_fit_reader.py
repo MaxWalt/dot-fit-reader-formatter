@@ -17,7 +17,8 @@ from fit_to_long_format import read_fit_file, write_csv
 def build_fit_file(laps: list[dict]) -> str:
     """
     Build a valid .fit file using fit-tool and return the temp file path.
-    Each lap dict: elapsed_time (s), avg_speed (m/s), distance (m).
+    Supported lap dict keys: elapsed_time, avg_speed, distance, avg_heart_rate,
+    max_heart_rate, avg_cadence, avg_power, total_calories, total_ascent.
     Caller is responsible for deleting the file.
     """
     builder = FitFileBuilder(auto_define=True, min_string_size=50)
@@ -31,7 +32,20 @@ def build_fit_file(laps: list[dict]) -> str:
         lap.total_elapsed_time = float(lap_data["elapsed_time"])
         lap.total_timer_time   = float(lap_data.get("timer_time", lap_data["elapsed_time"]))
         lap.avg_speed          = float(lap_data["avg_speed"])
-        lap.total_distance     = float(lap_data["distance"])
+        if lap_data.get("distance") is not None:
+            lap.total_distance = float(lap_data["distance"])
+        if lap_data.get("avg_heart_rate") is not None:
+            lap.avg_heart_rate = int(lap_data["avg_heart_rate"])
+        if lap_data.get("max_heart_rate") is not None:
+            lap.max_heart_rate = int(lap_data["max_heart_rate"])
+        if lap_data.get("avg_cadence") is not None:
+            lap.avg_cadence = int(lap_data["avg_cadence"])
+        if lap_data.get("avg_power") is not None:
+            lap.avg_power = int(lap_data["avg_power"])
+        if lap_data.get("total_calories") is not None:
+            lap.total_calories = int(lap_data["total_calories"])
+        if lap_data.get("total_ascent") is not None:
+            lap.total_ascent = int(lap_data["total_ascent"])
         builder.add(lap)
 
     fit_file = builder.build()
@@ -42,9 +56,15 @@ def build_fit_file(laps: list[dict]) -> str:
 
 
 TEST_LAPS = [
-    {"elapsed_time": 600.0,  "avg_speed": 4.167, "distance": 2500.0},
-    {"elapsed_time": 1200.0, "avg_speed": 5.556, "distance": 6667.0},
-    {"elapsed_time": 300.0,  "avg_speed": 3.0,   "distance": 900.0},
+    {"elapsed_time": 600.0,  "avg_speed": 4.167, "distance": 2500.0,
+     "avg_heart_rate": 140, "max_heart_rate": 160, "avg_cadence": 78,
+     "avg_power": 220, "total_calories": 200, "total_ascent": 50},
+    {"elapsed_time": 1200.0, "avg_speed": 5.556, "distance": 6667.0,
+     "avg_heart_rate": 155, "max_heart_rate": 172, "avg_cadence": 82,
+     "avg_power": 260, "total_calories": 430, "total_ascent": 30},
+    {"elapsed_time": 300.0,  "avg_speed": 3.0,   "distance": 900.0,
+     "avg_heart_rate": 120, "max_heart_rate": 135, "avg_cadence": 70,
+     "avg_power": 160, "total_calories": 90,  "total_ascent": 10},
 ]
 
 
@@ -57,6 +77,8 @@ class TestFitReader(unittest.TestCase):
         if os.path.exists(self.fit_path):
             os.unlink(self.fit_path)
 
+    # ── Basic structure ────────────────────────────────────────────────────────
+
     def test_reads_correct_number_of_sections(self):
         rows = read_fit_file(self.fit_path)
         self.assertEqual(len(rows), 3)
@@ -65,10 +87,17 @@ class TestFitReader(unittest.TestCase):
         rows = read_fit_file(self.fit_path)
         self.assertEqual([r["section"] for r in rows], [1, 2, 3])
 
+    def test_source_file_column_matches_filename(self):
+        rows = read_fit_file(self.fit_path)
+        for row in rows:
+            self.assertEqual(row["source_file"], os.path.basename(self.fit_path))
+
+    # ── Time ──────────────────────────────────────────────────────────────────
+
     def test_time_values_are_populated(self):
         rows = read_fit_file(self.fit_path)
         for row in rows:
-            self.assertIsNotNone(row["time_s"], f"time_s is None in section {row['section']}")
+            self.assertIsNotNone(row["time_s"])
             self.assertGreater(row["time_s"], 0)
 
     def test_time_values_match_input(self):
@@ -76,57 +105,105 @@ class TestFitReader(unittest.TestCase):
         for row, lap in zip(rows, TEST_LAPS):
             self.assertAlmostEqual(row["time_s"], lap["elapsed_time"], places=1)
 
+    # ── Speed ─────────────────────────────────────────────────────────────────
+
     def test_speed_values_are_populated(self):
         rows = read_fit_file(self.fit_path)
         for row in rows:
             self.assertIsNotNone(row["avg_speed_m_s"])
-            self.assertIsNotNone(row["avg_speed_km_h"])
             self.assertGreater(row["avg_speed_m_s"], 0)
 
-    def test_speed_conversion(self):
+    def test_speed_km_h_conversion(self):
         rows = read_fit_file(self.fit_path)
         for row in rows:
-            self.assertAlmostEqual(
-                row["avg_speed_km_h"],
-                row["avg_speed_m_s"] * 3.6,
-                places=2,
-            )
+            self.assertAlmostEqual(row["avg_speed_km_h"], row["avg_speed_m_s"] * 3.6, places=2)
+
+    # ── Distance ──────────────────────────────────────────────────────────────
 
     def test_distance_values_are_populated(self):
         rows = read_fit_file(self.fit_path)
         for row in rows:
             self.assertIsNotNone(row["distance_m"])
-            self.assertIsNotNone(row["distance_km"])
             self.assertGreater(row["distance_m"], 0)
 
-    def test_distance_conversion(self):
+    def test_distance_km_conversion(self):
         rows = read_fit_file(self.fit_path)
         for row in rows:
-            self.assertAlmostEqual(
-                row["distance_km"],
-                row["distance_m"] / 1000,
-                places=3,
-            )
+            self.assertAlmostEqual(row["distance_km"], row["distance_m"] / 1000, places=3)
 
     def test_distance_values_match_input(self):
         rows = read_fit_file(self.fit_path)
         for row, lap in zip(rows, TEST_LAPS):
             self.assertAlmostEqual(row["distance_m"], lap["distance"], places=0)
 
-    def test_csv_output_has_correct_columns(self):
+    def test_distance_not_derived_when_present(self):
+        rows = read_fit_file(self.fit_path)
+        for row in rows:
+            self.assertFalse(row["distance_derived"])
+
+    def test_distance_derived_when_absent(self):
+        """When total_distance is missing, distance should be calculated from speed × time."""
+        fit_path = build_fit_file([
+            {"elapsed_time": 600.0, "avg_speed": 4.0, "distance": None},
+        ])
+        try:
+            rows = read_fit_file(fit_path)
+            self.assertTrue(rows[0]["distance_derived"])
+            self.assertAlmostEqual(rows[0]["distance_m"], 4.0 * 600.0, places=0)
+        finally:
+            os.unlink(fit_path)
+
+    # ── Heart rate ────────────────────────────────────────────────────────────
+
+    def test_avg_hr_populated(self):
+        rows = read_fit_file(self.fit_path)
+        for row, lap in zip(rows, TEST_LAPS):
+            self.assertEqual(row["avg_hr_bpm"], lap["avg_heart_rate"])
+
+    def test_max_hr_populated(self):
+        rows = read_fit_file(self.fit_path)
+        for row, lap in zip(rows, TEST_LAPS):
+            self.assertEqual(row["max_hr_bpm"], lap["max_heart_rate"])
+
+    # ── Cadence ───────────────────────────────────────────────────────────────
+
+    def test_avg_cadence_populated(self):
+        rows = read_fit_file(self.fit_path)
+        for row, lap in zip(rows, TEST_LAPS):
+            self.assertEqual(row["avg_cadence_rpm"], lap["avg_cadence"])
+
+    # ── Power ─────────────────────────────────────────────────────────────────
+
+    def test_avg_power_populated(self):
+        rows = read_fit_file(self.fit_path)
+        for row, lap in zip(rows, TEST_LAPS):
+            self.assertEqual(row["avg_power_w"], lap["avg_power"])
+
+    # ── Calories & Ascent ─────────────────────────────────────────────────────
+
+    def test_calories_populated(self):
+        rows = read_fit_file(self.fit_path)
+        for row, lap in zip(rows, TEST_LAPS):
+            self.assertEqual(row["calories_kcal"], lap["total_calories"])
+
+    def test_ascent_populated(self):
+        rows = read_fit_file(self.fit_path)
+        for row, lap in zip(rows, TEST_LAPS):
+            self.assertEqual(row["total_ascent_m"], lap["total_ascent"])
+
+    # ── CSV output ────────────────────────────────────────────────────────────
+
+    def test_csv_contains_expected_columns(self):
         rows = read_fit_file(self.fit_path)
         csv_path = tempfile.mktemp(suffix=".csv")
         try:
             write_csv(rows, csv_path)
             with open(csv_path) as f:
-                reader = csv.DictReader(f)
-                fieldnames = reader.fieldnames
-            expected = [
-                "source_file", "section", "start_time", "end_time",
-                "time_s", "avg_speed_m_s", "avg_speed_km_h",
-                "distance_m", "distance_km",
-            ]
-            self.assertEqual(fieldnames, expected)
+                fieldnames = csv.DictReader(f).fieldnames
+            for col in ["source_file", "section", "time_s", "avg_speed_km_h",
+                        "distance_km", "avg_hr_bpm", "avg_cadence_rpm",
+                        "avg_power_w", "calories_kcal", "total_ascent_m"]:
+                self.assertIn(col, fieldnames)
         finally:
             if os.path.exists(csv_path):
                 os.unlink(csv_path)
@@ -137,12 +214,12 @@ class TestFitReader(unittest.TestCase):
         try:
             write_csv(rows, csv_path)
             with open(csv_path) as f:
-                reader = csv.DictReader(f)
-                csv_rows = list(reader)
-            self.assertEqual(len(csv_rows), 3)
+                self.assertEqual(len(list(csv.DictReader(f))), 3)
         finally:
             if os.path.exists(csv_path):
                 os.unlink(csv_path)
+
+    # ── Edge cases ────────────────────────────────────────────────────────────
 
     def test_invalid_file_raises(self):
         tmp = tempfile.NamedTemporaryFile(suffix=".fit", delete=False)
@@ -159,18 +236,10 @@ class TestFitReader(unittest.TestCase):
             {"elapsed_time": 180.0, "avg_speed": 2.5, "distance": 450.0},
         ])
         try:
-            rows1 = read_fit_file(self.fit_path)
-            rows2 = read_fit_file(fit_path2)
-            all_rows = rows1 + rows2
+            all_rows = read_fit_file(self.fit_path) + read_fit_file(fit_path2)
             self.assertEqual(len(all_rows), 4)
         finally:
             os.unlink(fit_path2)
-
-    def test_source_file_column_matches_filename(self):
-        rows = read_fit_file(self.fit_path)
-        expected_name = os.path.basename(self.fit_path)
-        for row in rows:
-            self.assertEqual(row["source_file"], expected_name)
 
 
 if __name__ == "__main__":

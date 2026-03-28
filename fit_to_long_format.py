@@ -2,7 +2,8 @@
 """
 FIT file reader that extracts lap/section data into a long-format CSV.
 
-Outputs: section index, time (seconds), avg_speed (m/s & km/h), distance (m & km)
+Outputs per section: time, speed, distance, HR, cadence, power,
+altitude, temperature, calories, ascent/descent, and more.
 """
 
 import argparse
@@ -22,6 +23,11 @@ try:
     HAS_PANDAS = True
 except ImportError:
     HAS_PANDAS = False
+
+
+def _r(value, places=2):
+    """Round a value if not None."""
+    return round(value, places) if value is not None else None
 
 
 def read_fit_file(fit_path: str) -> list[dict]:
@@ -47,26 +53,103 @@ def read_fit_file(fit_path: str) -> list[dict]:
 
     rows = []
     for i, lap in enumerate(laps, start=1):
-        elapsed_time = lap.get("total_elapsed_time")   # seconds
-        timer_time   = lap.get("total_timer_time")     # active time, seconds
-        avg_speed    = lap.get("avg_speed")            # m/s
-        distance     = lap.get("total_distance")       # meters
-        start_time   = lap.get("start_time")
-        timestamp    = lap.get("timestamp")
+        # ── Time ──────────────────────────────────────────────────────────────
+        elapsed_time = lap.get("total_elapsed_time")
+        timer_time   = lap.get("total_timer_time")
+        moving_time  = lap.get("total_moving_time")
+        # Prefer moving time → timer time → elapsed time
+        section_time = moving_time if moving_time is not None else (
+                       timer_time  if timer_time  is not None else elapsed_time)
 
-        # Prefer timer_time (moving time) but fall back to elapsed_time
-        section_time = timer_time if timer_time is not None else elapsed_time
+        # ── Speed ─────────────────────────────────────────────────────────────
+        # Prefer enhanced fields (sub-meter precision) when available
+        avg_speed = lap.get("enhanced_avg_speed") or lap.get("avg_speed")
+        max_speed = lap.get("enhanced_max_speed") or lap.get("max_speed")
+
+        # ── Distance ──────────────────────────────────────────────────────────
+        distance = lap.get("total_distance")
+        # If absent or zero, derive from avg_speed × time
+        if (distance is None or distance == 0) and avg_speed and section_time:
+            distance = avg_speed * section_time
+            distance_derived = True
+        else:
+            distance_derived = False
+
+        # ── Heart rate ────────────────────────────────────────────────────────
+        avg_hr  = lap.get("avg_heart_rate")
+        max_hr  = lap.get("max_heart_rate")
+        min_hr  = lap.get("min_heart_rate")
+
+        # ── Cadence ───────────────────────────────────────────────────────────
+        # avg_cadence is steps/min (running) or rpm (cycling)
+        avg_cadence = lap.get("avg_cadence")
+        max_cadence = lap.get("max_cadence")
+        # Running-specific: avg_running_cadence is strides/min (×2 = steps/min)
+        avg_run_cadence = lap.get("avg_running_cadence")
+
+        # ── Power (cycling / running) ─────────────────────────────────────────
+        avg_power        = lap.get("avg_power")
+        max_power        = lap.get("max_power")
+        normalized_power = lap.get("normalized_power")
+
+        # ── Altitude ──────────────────────────────────────────────────────────
+        avg_alt = lap.get("enhanced_avg_altitude") or lap.get("avg_altitude")
+        max_alt = lap.get("enhanced_max_altitude") or lap.get("max_altitude")
+        min_alt = lap.get("enhanced_min_altitude") or lap.get("min_altitude")
+        ascent  = lap.get("total_ascent")
+        descent = lap.get("total_descent")
+
+        # ── Other ─────────────────────────────────────────────────────────────
+        calories    = lap.get("total_calories")
+        temperature = lap.get("avg_temperature")
+        avg_grade   = lap.get("avg_grade")
+        sport       = lap.get("sport")
+        sub_sport   = lap.get("sub_sport")
+        start_time  = lap.get("start_time")
+        timestamp   = lap.get("timestamp")
 
         row = {
-            "source_file":       os.path.basename(fit_path),
-            "section":           i,
-            "start_time":        str(start_time) if start_time else None,
-            "end_time":          str(timestamp)  if timestamp  else None,
-            "time_s":            round(section_time, 2) if section_time is not None else None,
-            "avg_speed_m_s":     round(avg_speed, 4)    if avg_speed   is not None else None,
-            "avg_speed_km_h":    round(avg_speed * 3.6, 4) if avg_speed is not None else None,
-            "distance_m":        round(distance, 2)     if distance    is not None else None,
-            "distance_km":       round(distance / 1000, 4) if distance is not None else None,
+            # Metadata
+            "source_file":        os.path.basename(fit_path),
+            "section":            i,
+            "sport":              sport,
+            "sub_sport":          sub_sport,
+            "start_time":         str(start_time) if start_time else None,
+            "end_time":           str(timestamp)  if timestamp  else None,
+            # Time
+            "time_s":             _r(section_time, 2),
+            "elapsed_time_s":     _r(elapsed_time, 2),
+            # Speed
+            "avg_speed_m_s":      _r(avg_speed, 4),
+            "avg_speed_km_h":     _r(avg_speed * 3.6, 4) if avg_speed is not None else None,
+            "max_speed_m_s":      _r(max_speed, 4),
+            "max_speed_km_h":     _r(max_speed * 3.6, 4) if max_speed is not None else None,
+            # Distance
+            "distance_m":         _r(distance, 2),
+            "distance_km":        _r(distance / 1000, 4) if distance is not None else None,
+            "distance_derived":   distance_derived,
+            # Heart rate
+            "avg_hr_bpm":         avg_hr,
+            "max_hr_bpm":         max_hr,
+            "min_hr_bpm":         min_hr,
+            # Cadence
+            "avg_cadence_rpm":    avg_cadence,
+            "max_cadence_rpm":    max_cadence,
+            "avg_running_cadence_spm": avg_run_cadence,
+            # Power
+            "avg_power_w":        avg_power,
+            "max_power_w":        max_power,
+            "normalized_power_w": normalized_power,
+            # Altitude
+            "avg_altitude_m":     _r(avg_alt, 1),
+            "max_altitude_m":     _r(max_alt, 1),
+            "min_altitude_m":     _r(min_alt, 1),
+            "total_ascent_m":     ascent,
+            "total_descent_m":    descent,
+            "avg_grade_pct":      _r(avg_grade, 2),
+            # Other
+            "calories_kcal":      calories,
+            "avg_temperature_c":  temperature,
         }
         rows.append(row)
 
@@ -86,7 +169,7 @@ def write_csv(rows: list[dict], output_path: str) -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Convert .fit file(s) to a long-format CSV with section time, avg speed and distance."
+        description="Convert .fit file(s) to a long-format CSV with section metrics."
     )
     parser.add_argument(
         "fit_files",
@@ -129,16 +212,16 @@ def main():
     if args.print_table:
         if HAS_PANDAS:
             df = pd.DataFrame(all_rows)
-            with pd.option_context("display.max_rows", None, "display.max_columns", None, "display.width", 120):
+            with pd.option_context("display.max_rows", None, "display.max_columns", None, "display.width", 160):
                 print(df.to_string(index=False))
         else:
-            # Fallback plain text table
-            cols = ["source_file", "section", "time_s", "avg_speed_km_h", "distance_km"]
-            header = "  ".join(f"{c:<20}" for c in cols)
+            cols = ["source_file", "section", "time_s", "avg_speed_km_h", "distance_km",
+                    "avg_hr_bpm", "avg_cadence_rpm"]
+            header = "  ".join(f"{c:<22}" for c in cols)
             print(header)
             print("-" * len(header))
             for row in all_rows:
-                line = "  ".join(f"{str(row.get(c, '')):<20}" for c in cols)
+                line = "  ".join(f"{str(row.get(c, '')):<22}" for c in cols)
                 print(line)
 
 

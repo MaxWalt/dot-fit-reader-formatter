@@ -160,11 +160,6 @@ class TestFitReader(unittest.TestCase):
         for row, lap in zip(rows, TEST_LAPS):
             self.assertEqual(row["avg_hr_bpm"], lap["avg_heart_rate"])
 
-    def test_max_hr_populated(self):
-        rows = read_fit_file(self.fit_path)
-        for row, lap in zip(rows, TEST_LAPS):
-            self.assertEqual(row["max_hr_bpm"], lap["max_heart_rate"])
-
     # ── Cadence ───────────────────────────────────────────────────────────────
 
     def test_avg_cadence_populated(self):
@@ -255,13 +250,48 @@ class TestFitReader(unittest.TestCase):
             write_csv(rows, csv_path)
             with open(csv_path) as f:
                 fieldnames = csv.DictReader(f).fieldnames
-            for col in ["source_file", "section", "time_s", "avg_speed_km_h",
-                        "distance_km", "avg_hr_bpm", "avg_cadence_rpm",
-                        "avg_power_w", "calories_kcal", "total_ascent_m"]:
+            for col in ["source_file", "workout_name", "section", "time_s",
+                        "avg_speed_km_h", "distance_km", "avg_hr_bpm",
+                        "avg_cadence_rpm", "avg_power_w", "calories_kcal",
+                        "total_ascent_m"]:
                 self.assertIn(col, fieldnames)
+            # max/min fields must be absent
+            for col in ["max_hr_bpm", "min_hr_bpm", "max_cadence_rpm",
+                        "max_power_w", "max_speed_km_h"]:
+                self.assertNotIn(col, fieldnames)
         finally:
             if os.path.exists(csv_path):
                 os.unlink(csv_path)
+
+    def test_workout_name_none_for_free_activity(self):
+        rows = read_fit_file(self.fit_path)
+        for row in rows:
+            self.assertIsNone(row["workout_name"])
+
+    def test_workout_name_populated_from_file(self):
+        from fit_tool.fit_file_builder import FitFileBuilder
+        from fit_tool.profile.messages.file_id_message import FileIdMessage
+        from fit_tool.profile.messages.lap_message import LapMessage
+        from fit_tool.profile.messages.workout_message import WorkoutMessage
+        from fit_tool.profile.profile_type import FileType
+        builder = FitFileBuilder(auto_define=True, min_string_size=50)
+        fid = FileIdMessage(); fid.type = FileType.ACTIVITY
+        builder.add(fid)
+        w = WorkoutMessage(); w.workout_name = "Threshold Intervals"
+        builder.add(w)
+        lap = LapMessage()
+        lap.total_elapsed_time = 300.0
+        lap.avg_speed = 4.0
+        lap.total_distance = 1200.0
+        builder.add(lap)
+        fit_file = builder.build()
+        tmp = tempfile.NamedTemporaryFile(suffix=".fit", delete=False)
+        tmp.close(); fit_file.to_file(tmp.name)
+        try:
+            rows = read_fit_file(tmp.name)
+            self.assertEqual(rows[0]["workout_name"], "Threshold Intervals")
+        finally:
+            os.unlink(tmp.name)
 
     def test_csv_row_count(self):
         rows = read_fit_file(self.fit_path)

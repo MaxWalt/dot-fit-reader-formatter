@@ -51,6 +51,12 @@ def read_fit_file(fit_path: str) -> list[dict]:
     if not laps:
         raise ValueError(f"No lap/section messages found in {fit_path}")
 
+    # Workout name — present only for structured workouts
+    workout_name = None
+    workouts = messages.get("workout_mesgs", [])
+    if workouts:
+        workout_name = workouts[0].get("wkt_name")
+
     rows = []
     for i, lap in enumerate(laps, start=1):
         # ── Time ──────────────────────────────────────────────────────────────
@@ -64,7 +70,6 @@ def read_fit_file(fit_path: str) -> list[dict]:
         # ── Speed ─────────────────────────────────────────────────────────────
         # Prefer enhanced fields (sub-meter precision) when available
         avg_speed = lap.get("enhanced_avg_speed") or lap.get("avg_speed")
-        max_speed = lap.get("enhanced_max_speed") or lap.get("max_speed")
 
         # ── Distance ──────────────────────────────────────────────────────────
         distance = lap.get("total_distance")
@@ -76,15 +81,10 @@ def read_fit_file(fit_path: str) -> list[dict]:
             distance_derived = False
 
         # ── Heart rate ────────────────────────────────────────────────────────
-        avg_hr  = lap.get("avg_heart_rate")
-        max_hr  = lap.get("max_heart_rate")
-        min_hr  = lap.get("min_heart_rate")
+        avg_hr = lap.get("avg_heart_rate")
 
         # ── Cadence ───────────────────────────────────────────────────────────
-        # avg_cadence is steps/min (running) or rpm (cycling)
-        avg_cadence = lap.get("avg_cadence")
-        max_cadence = lap.get("max_cadence")
-        # Running-specific: avg_running_cadence is strides/min (×2 = steps/min)
+        avg_cadence     = lap.get("avg_cadence")
         avg_run_cadence = lap.get("avg_running_cadence")
 
         # ── Step / stride length ─────────────────────────────────────────────
@@ -108,13 +108,10 @@ def read_fit_file(fit_path: str) -> list[dict]:
 
         # ── Power (cycling / running) ─────────────────────────────────────────
         avg_power        = lap.get("avg_power")
-        max_power        = lap.get("max_power")
         normalized_power = lap.get("normalized_power")
 
         # ── Altitude ──────────────────────────────────────────────────────────
         avg_alt = lap.get("enhanced_avg_altitude") or lap.get("avg_altitude")
-        max_alt = lap.get("enhanced_max_altitude") or lap.get("max_altitude")
-        min_alt = lap.get("enhanced_min_altitude") or lap.get("min_altitude")
         ascent  = lap.get("total_ascent")
         descent = lap.get("total_descent")
 
@@ -130,6 +127,7 @@ def read_fit_file(fit_path: str) -> list[dict]:
         row = {
             # Metadata
             "source_file":        os.path.basename(fit_path),
+            "workout_name":       workout_name,
             "section":            i,
             "sport":              sport,
             "sub_sport":          sub_sport,
@@ -141,19 +139,14 @@ def read_fit_file(fit_path: str) -> list[dict]:
             # Speed
             "avg_speed_m_s":      _r(avg_speed, 4),
             "avg_speed_km_h":     _r(avg_speed * 3.6, 4) if avg_speed is not None else None,
-            "max_speed_m_s":      _r(max_speed, 4),
-            "max_speed_km_h":     _r(max_speed * 3.6, 4) if max_speed is not None else None,
             # Distance
             "distance_m":         _r(distance, 2),
             "distance_km":        _r(distance / 1000, 4) if distance is not None else None,
             "distance_derived":   distance_derived,
             # Heart rate
             "avg_hr_bpm":         avg_hr,
-            "max_hr_bpm":         max_hr,
-            "min_hr_bpm":         min_hr,
             # Cadence
             "avg_cadence_rpm":         avg_cadence,
-            "max_cadence_rpm":         max_cadence,
             "avg_running_cadence_spm": avg_run_cadence,
             # Step / stride length
             "avg_step_length_m":       _r(step_length_m, 3),
@@ -161,12 +154,9 @@ def read_fit_file(fit_path: str) -> list[dict]:
             "step_length_derived":     step_derived,
             # Power
             "avg_power_w":        avg_power,
-            "max_power_w":        max_power,
             "normalized_power_w": normalized_power,
             # Altitude
             "avg_altitude_m":     _r(avg_alt, 1),
-            "max_altitude_m":     _r(max_alt, 1),
-            "min_altitude_m":     _r(min_alt, 1),
             "total_ascent_m":     ascent,
             "total_descent_m":    descent,
             "avg_grade_pct":      _r(avg_grade, 2),

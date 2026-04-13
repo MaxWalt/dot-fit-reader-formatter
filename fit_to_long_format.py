@@ -93,18 +93,33 @@ def read_fit_file(fit_path: str) -> list[dict]:
         # Fallback: derive step length from speed ÷ step_rate.
         #   step_rate (steps/s) = avg_cadence (steps/min) / 60
         #   step_length (m)     = avg_speed (m/s) / step_rate
+        # ── Step / stride length ─────────────────────────────────────────────
+        # Garmin running cadence = strides/min (one foot), so:
+        #   stride_length (m) = speed (m/s) / (cadence (strides/min) / 60)
+        #   step_length   (m) = stride_length / 2
+        #
+        # When avg_step_length is present in the file it is in mm and already
+        # represents a single step; stride = step * 2.
         raw_step_mm = lap.get("avg_step_length")
         if raw_step_mm is not None and raw_step_mm > 0:
-            step_length_m  = raw_step_mm / 1000.0
-            step_derived   = False
+            step_length_m   = raw_step_mm / 1000.0
+            stride_length_m = step_length_m * 2
+            step_derived    = False
         elif avg_speed and avg_cadence and avg_cadence > 0:
-            step_length_m  = avg_speed / (avg_cadence / 60.0)
-            step_derived   = True
+            stride_length_m = avg_speed / (avg_cadence / 60.0)
+            step_length_m   = stride_length_m / 2
+            step_derived    = True
         else:
-            step_length_m  = None
-            step_derived   = False
+            step_length_m   = None
+            stride_length_m = None
+            step_derived    = False
 
-        stride_length_m = step_length_m * 2 if step_length_m is not None else None
+        # ── HR efficiency & decoupling ────────────────────────────────────────
+        # Efficiency factor: speed relative to HR cost (km/h per bpm).
+        # Higher = more economical. Used to compute aerobic decoupling
+        # across sections in downstream analysis.
+        efficiency_factor = _r(avg_speed * 3.6 / avg_hr, 4) \
+            if avg_speed and avg_hr else None
 
         # ── Power (cycling / running) ─────────────────────────────────────────
         avg_power        = lap.get("avg_power")
@@ -152,6 +167,8 @@ def read_fit_file(fit_path: str) -> list[dict]:
             "avg_step_length_m":       _r(step_length_m, 3),
             "avg_stride_length_m":     _r(stride_length_m, 3),
             "step_length_derived":     step_derived,
+            # HR efficiency & decoupling
+            "efficiency_factor":       efficiency_factor,
             # Power
             "avg_power_w":        avg_power,
             "normalized_power_w": normalized_power,

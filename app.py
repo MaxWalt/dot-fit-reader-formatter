@@ -53,17 +53,48 @@ if n_derived > 0:
         "distance was calculated from avg speed × time."
     )
 
+# ── Aerobic decoupling (Pa:Hr) ─────────────────────────────────────────────────
+# Computed per file from efficiency_factor (speed/HR).
+# Split sections into two halves; decoupling = drop in efficiency 1st→2nd half.
+# < 5 % = well-coupled (aerobically fit for that effort).
+def compute_decoupling(group: pd.DataFrame) -> float | None:
+    ef = group["efficiency_factor"].dropna()
+    if len(ef) < 2:
+        return None
+    mid = len(ef) // 2
+    first_half  = ef.iloc[:mid].mean()
+    second_half = ef.iloc[mid:].mean()
+    if first_half == 0:
+        return None
+    return round((first_half - second_half) / first_half * 100, 2)
+
 # ── Summary cards ──────────────────────────────────────────────────────────────
 st.subheader("Summary")
 c1, c2, c3, c4, c5, c6 = st.columns(6)
-c1.metric("Files",           df["source_file"].nunique())
-c2.metric("Sections",        len(df))
-c3.metric("Total distance",  f"{df['distance_km'].sum():.2f} km")
-c4.metric("Total time",      f"{df['time_s'].sum() / 60:.1f} min")
+c1.metric("Files",          df["source_file"].nunique())
+c2.metric("Sections",       len(df))
+c3.metric("Total distance", f"{df['distance_km'].sum():.2f} km")
+c4.metric("Total time",     f"{df['time_s'].sum() / 60:.1f} min")
 if df["calories_kcal"].notna().any():
     c5.metric("Total calories", f"{int(df['calories_kcal'].sum())} kcal")
 if df["total_ascent_m"].notna().any():
     c6.metric("Total ascent", f"{int(df['total_ascent_m'].sum())} m")
+
+# Aerobic decoupling per file
+if df["efficiency_factor"].notna().any():
+    st.subheader("Aerobic decoupling (Pa:Hr)")
+    st.caption(
+        "Compares efficiency (speed ÷ HR) between the first and second half of each session. "
+        "< 5 % = well-coupled | > 5 % = cardiac drift detected."
+    )
+    dec_cols = st.columns(min(len(uploaded_files), 4))
+    for idx, fname in enumerate(df["source_file"].unique()):
+        dec = compute_decoupling(df[df["source_file"] == fname])
+        if dec is not None:
+            label = "✅ Well-coupled" if dec < 5 else "⚠️ Drift detected"
+            dec_cols[idx % len(dec_cols)].metric(
+                fname, f"{dec:.1f} %", label
+            )
 
 st.divider()
 
@@ -77,7 +108,6 @@ if df["source_file"].nunique() > 1:
     df = df[df["source_file"].isin(selected_files)]
 
 # ── Charts ─────────────────────────────────────────────────────────────────────
-# Only render a chart if the column has at least one non-null value
 def has_data(col):
     return col in df.columns and df[col].notna().any()
 
@@ -92,32 +122,44 @@ with col2:
     st.markdown("**Distance per section (km)**")
     st.bar_chart(df.set_index("section")["distance_km"])
 
-# Row 2 — HR & Cadence (only if present)
-if has_data("avg_hr_bpm") or has_data("avg_cadence_rpm"):
+# Row 2 — HR & HR drift
+if has_data("avg_hr_bpm"):
     col3, col4 = st.columns(2)
     with col3:
-        if has_data("avg_hr_bpm"):
-            st.markdown("**Avg heart rate per section (bpm)**")
-            st.bar_chart(df.set_index("section")["avg_hr_bpm"])
+        st.markdown("**Avg HR per section (bpm)**")
+        st.bar_chart(df.set_index("section")["avg_hr_bpm"])
     with col4:
+        st.markdown("**HR drift across sections (Δ bpm from previous)**")
+        hr_drift = df.set_index("section")["avg_hr_bpm"].diff()
+        st.bar_chart(hr_drift)
+
+# Row 3 — Efficiency factor & Cadence
+if has_data("efficiency_factor") or has_data("avg_cadence_rpm"):
+    col5, col6 = st.columns(2)
+    with col5:
+        if has_data("efficiency_factor"):
+            st.markdown("**Efficiency factor per section (km/h per bpm)**")
+            st.line_chart(df.set_index("section")["efficiency_factor"])
+    with col6:
         if has_data("avg_cadence_rpm"):
-            st.markdown("**Avg cadence per section (rpm / spm)**")
+            st.markdown("**Avg cadence per section**")
             st.bar_chart(df.set_index("section")["avg_cadence_rpm"])
 
+# Row 4 — Stride length
 if has_data("avg_stride_length_m"):
     col_sl, _ = st.columns(2)
     with col_sl:
         st.markdown("**Avg stride length per section (m)**")
         st.bar_chart(df.set_index("section")["avg_stride_length_m"])
 
-# Row 3 — Power & Altitude (only if present)
+# Row 5 — Power & Altitude
 if has_data("avg_power_w") or has_data("avg_altitude_m"):
-    col5, col6 = st.columns(2)
-    with col5:
+    col7, col8 = st.columns(2)
+    with col7:
         if has_data("avg_power_w"):
             st.markdown("**Avg power per section (W)**")
             st.bar_chart(df.set_index("section")["avg_power_w"])
-    with col6:
+    with col8:
         if has_data("avg_altitude_m"):
             st.markdown("**Avg altitude per section (m)**")
             st.bar_chart(df.set_index("section")["avg_altitude_m"])
@@ -127,30 +169,26 @@ st.divider()
 # ── Data table ─────────────────────────────────────────────────────────────────
 st.subheader("Section data")
 
-# Drop columns that are entirely null (not recorded in this file)
 df_view = df.dropna(axis=1, how="all")
-# Drop internal flag columns from the visible table
 df_view = df_view.drop(columns=["distance_derived", "step_length_derived"], errors="ignore")
 
 column_config = {
     "workout_name":            st.column_config.TextColumn("Workout name"),
-    "time_s":                  st.column_config.NumberColumn("Time (s)",           format="%.1f"),
-    "elapsed_time_s":          st.column_config.NumberColumn("Elapsed (s)",        format="%.1f"),
-    "avg_speed_m_s":           st.column_config.NumberColumn("Avg spd (m/s)",      format="%.3f"),
-    "avg_speed_km_h":          st.column_config.NumberColumn("Avg spd (km/h)",     format="%.2f"),
-    "distance_m":              st.column_config.NumberColumn("Distance (m)",       format="%.1f"),
-    "distance_km":             st.column_config.NumberColumn("Distance (km)",      format="%.3f"),
-    "avg_hr_bpm":              st.column_config.NumberColumn("Avg HR (bpm)",       format="%d"),
-    "avg_cadence_rpm":         st.column_config.NumberColumn("Avg cadence",        format="%d"),
-    "avg_running_cadence_spm": st.column_config.NumberColumn("Avg run cad (spm)",  format="%d"),
-    "avg_step_length_m":       st.column_config.NumberColumn("Step length (m)",    format="%.3f"),
-    "avg_stride_length_m":     st.column_config.NumberColumn("Stride length (m)",  format="%.3f"),
+    "time_s":                  st.column_config.NumberColumn("Time (s)",          format="%.1f"),
+    "elapsed_time_s":          st.column_config.NumberColumn("Elapsed (s)",       format="%.1f"),
+    "avg_speed_m_s":           st.column_config.NumberColumn("Avg spd (m/s)",     format="%.3f"),
+    "avg_speed_km_h":          st.column_config.NumberColumn("Avg spd (km/h)",    format="%.2f"),
+    "distance_m":              st.column_config.NumberColumn("Distance (m)",      format="%.1f"),
+    "distance_km":             st.column_config.NumberColumn("Distance (km)",     format="%.3f"),
+    "avg_hr_bpm":              st.column_config.NumberColumn("Avg HR (bpm)",      format="%d"),
+    "avg_cadence_rpm":         st.column_config.NumberColumn("Avg cadence",       format="%d"),
+    "avg_running_cadence_spm": st.column_config.NumberColumn("Avg run cad (spm)", format="%d"),
+    "avg_step_length_m":       st.column_config.NumberColumn("Step length (m)",   format="%.3f"),
+    "avg_stride_length_m":     st.column_config.NumberColumn("Stride length (m)", format="%.3f"),
+    "efficiency_factor":       st.column_config.NumberColumn("Efficiency (km/h/bpm)", format="%.4f"),
     "avg_power_w":             st.column_config.NumberColumn("Avg power (W)",     format="%d"),
-    "max_power_w":             st.column_config.NumberColumn("Max power (W)",     format="%d"),
     "normalized_power_w":      st.column_config.NumberColumn("NP (W)",            format="%d"),
     "avg_altitude_m":          st.column_config.NumberColumn("Avg alt (m)",       format="%.1f"),
-    "max_altitude_m":          st.column_config.NumberColumn("Max alt (m)",       format="%.1f"),
-    "min_altitude_m":          st.column_config.NumberColumn("Min alt (m)",       format="%.1f"),
     "total_ascent_m":          st.column_config.NumberColumn("Ascent (m)",        format="%d"),
     "total_descent_m":         st.column_config.NumberColumn("Descent (m)",       format="%d"),
     "avg_grade_pct":           st.column_config.NumberColumn("Avg grade (%)",     format="%.1f"),

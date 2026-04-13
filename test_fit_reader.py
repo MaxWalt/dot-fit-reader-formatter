@@ -177,7 +177,7 @@ class TestFitReader(unittest.TestCase):
     # ── Step / stride length ─────────────────────────────────────────────────
 
     def test_stride_length_from_file(self):
-        """When avg_step_length is in the file, stride = step * 2."""
+        """When avg_step_length is in the file (mm), step=mm/1000, stride=step*2."""
         from fit_tool.fit_file_builder import FitFileBuilder
         from fit_tool.profile.messages.file_id_message import FileIdMessage
         from fit_tool.profile.messages.lap_message import LapMessage
@@ -188,31 +188,32 @@ class TestFitReader(unittest.TestCase):
         lap = LapMessage()
         lap.total_elapsed_time = 600.0
         lap.avg_speed = 4.0
-        lap.avg_cadence = 160
-        lap.avg_step_length = 1500  # mm → 1.5 m/step
+        lap.avg_cadence = 92
+        lap.avg_step_length = 1200  # mm → 1.2 m/step → 2.4 m/stride
         builder.add(lap)
         fit_file = builder.build()
         tmp = tempfile.NamedTemporaryFile(suffix=".fit", delete=False)
         tmp.close(); fit_file.to_file(tmp.name)
         try:
             rows = read_fit_file(tmp.name)
-            self.assertAlmostEqual(rows[0]["avg_step_length_m"],   1.5,  places=3)
-            self.assertAlmostEqual(rows[0]["avg_stride_length_m"], 3.0,  places=3)
+            self.assertAlmostEqual(rows[0]["avg_step_length_m"],   1.2, places=3)
+            self.assertAlmostEqual(rows[0]["avg_stride_length_m"], 2.4, places=3)
             self.assertFalse(rows[0]["step_length_derived"])
         finally:
             os.unlink(tmp.name)
 
     def test_stride_length_derived_from_speed_cadence(self):
-        """When step_length absent, derive from speed / (cadence/60)."""
+        """Cadence = strides/min: stride = speed/(cadence/60), step = stride/2."""
         fit_path = build_fit_file([
             {"elapsed_time": 600.0, "avg_speed": 4.0, "distance": 2400.0,
-             "avg_cadence": 160},
+             "avg_cadence": 92},
         ])
         try:
             rows = read_fit_file(fit_path)
-            expected_step = 4.0 / (160 / 60)   # = 1.5 m
-            self.assertAlmostEqual(rows[0]["avg_step_length_m"],   expected_step,     places=3)
-            self.assertAlmostEqual(rows[0]["avg_stride_length_m"], expected_step * 2, places=3)
+            expected_stride = 4.0 / (92 / 60)      # ≈ 2.609 m
+            expected_step   = expected_stride / 2   # ≈ 1.304 m
+            self.assertAlmostEqual(rows[0]["avg_stride_length_m"], expected_stride, places=3)
+            self.assertAlmostEqual(rows[0]["avg_step_length_m"],   expected_step,   places=3)
             self.assertTrue(rows[0]["step_length_derived"])
         finally:
             os.unlink(fit_path)

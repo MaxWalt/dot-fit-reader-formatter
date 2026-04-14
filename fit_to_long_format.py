@@ -58,6 +58,7 @@ def read_fit_file(fit_path: str) -> list[dict]:
         workout_name = workouts[0].get("wkt_name")
 
     rows = []
+    prev_hr = None
     for i, lap in enumerate(laps, start=1):
         # ── Time ──────────────────────────────────────────────────────────────
         elapsed_time = lap.get("total_elapsed_time")
@@ -82,17 +83,14 @@ def read_fit_file(fit_path: str) -> list[dict]:
 
         # ── Heart rate ────────────────────────────────────────────────────────
         avg_hr = lap.get("avg_heart_rate")
+        hr_drift_bpm = _r(avg_hr - prev_hr, 1) if (avg_hr is not None and prev_hr is not None) else None
+        prev_hr = avg_hr
 
         # ── Cadence ───────────────────────────────────────────────────────────
-        avg_cadence     = lap.get("avg_cadence")
-        avg_run_cadence = lap.get("avg_running_cadence")
+        # avg_cadence = strides/min for running, rpm for cycling.
+        # avg_running_cadence duplicates this for running; keep only avg_cadence.
+        avg_cadence = lap.get("avg_cadence")
 
-        # ── Step / stride length ─────────────────────────────────────────────
-        # avg_step_length from file is in mm; convert to metres.
-        # Stride = 2 steps (one full gait cycle).
-        # Fallback: derive step length from speed ÷ step_rate.
-        #   step_rate (steps/s) = avg_cadence (steps/min) / 60
-        #   step_length (m)     = avg_speed (m/s) / step_rate
         # ── Step / stride length ─────────────────────────────────────────────
         # Garmin running cadence = strides/min (one foot), so:
         #   stride_length (m) = speed (m/s) / (cadence (strides/min) / 60)
@@ -159,10 +157,10 @@ def read_fit_file(fit_path: str) -> list[dict]:
             "distance_km":        _r(distance / 1000, 4) if distance is not None else None,
             "distance_derived":   distance_derived,
             # Heart rate
-            "avg_hr_bpm":         avg_hr,
+            "avg_hr_bpm":    avg_hr,
+            "hr_drift_bpm":  hr_drift_bpm,
             # Cadence
-            "avg_cadence_rpm":         avg_cadence,
-            "avg_running_cadence_spm": avg_run_cadence,
+            "avg_cadence_rpm": avg_cadence,
             # Step / stride length
             "avg_step_length_m":       _r(step_length_m, 3),
             "avg_stride_length_m":     _r(stride_length_m, 3),
@@ -182,6 +180,22 @@ def read_fit_file(fit_path: str) -> list[dict]:
             "avg_temperature_c":  temperature,
         }
         rows.append(row)
+
+    # ── Aerobic decoupling (Pa:Hr) ────────────────────────────────────────────
+    # Split all sections into two halves; compare mean efficiency_factor.
+    # Decoupling % = (first_half - second_half) / first_half × 100.
+    # Positive = HR rose relative to speed (cardiac drift).
+    ef_values = [r["efficiency_factor"] for r in rows if r["efficiency_factor"] is not None]
+    if len(ef_values) >= 2:
+        mid = len(ef_values) // 2
+        first_mean  = sum(ef_values[:mid]) / mid
+        second_mean = sum(ef_values[mid:]) / len(ef_values[mid:])
+        decoupling  = _r((first_mean - second_mean) / first_mean * 100, 2) \
+            if first_mean != 0 else None
+    else:
+        decoupling = None
+    for row in rows:
+        row["aerobic_decoupling_pct"] = decoupling
 
     return rows
 

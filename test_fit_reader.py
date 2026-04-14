@@ -253,16 +253,44 @@ class TestFitReader(unittest.TestCase):
                 fieldnames = csv.DictReader(f).fieldnames
             for col in ["source_file", "workout_name", "section", "time_s",
                         "avg_speed_km_h", "distance_km", "avg_hr_bpm",
-                        "avg_cadence_rpm", "avg_power_w", "calories_kcal",
-                        "total_ascent_m"]:
+                        "hr_drift_bpm", "avg_cadence_rpm", "efficiency_factor",
+                        "aerobic_decoupling_pct", "avg_power_w",
+                        "calories_kcal", "total_ascent_m"]:
                 self.assertIn(col, fieldnames)
-            # max/min fields must be absent
+            # removed fields must be absent
             for col in ["max_hr_bpm", "min_hr_bpm", "max_cadence_rpm",
-                        "max_power_w", "max_speed_km_h"]:
+                        "max_power_w", "max_speed_km_h", "avg_running_cadence_spm"]:
                 self.assertNotIn(col, fieldnames)
         finally:
             if os.path.exists(csv_path):
                 os.unlink(csv_path)
+
+    def test_hr_drift_first_section_is_none(self):
+        rows = read_fit_file(self.fit_path)
+        self.assertIsNone(rows[0]["hr_drift_bpm"])
+
+    def test_hr_drift_subsequent_sections(self):
+        rows = read_fit_file(self.fit_path)
+        for i in range(1, len(rows)):
+            expected = round(TEST_LAPS[i]["avg_heart_rate"] - TEST_LAPS[i-1]["avg_heart_rate"], 1)
+            self.assertAlmostEqual(rows[i]["hr_drift_bpm"], expected, places=1)
+
+    def test_aerobic_decoupling_present(self):
+        rows = read_fit_file(self.fit_path)
+        # All rows share the same session-level decoupling value
+        dec_values = {r["aerobic_decoupling_pct"] for r in rows}
+        self.assertEqual(len(dec_values), 1)
+        self.assertIsNotNone(list(dec_values)[0])
+
+    def test_aerobic_decoupling_none_without_hr(self):
+        fit_path = build_fit_file([
+            {"elapsed_time": 300.0, "avg_speed": 4.0, "distance": 1200.0},
+        ])
+        try:
+            rows = read_fit_file(fit_path)
+            self.assertIsNone(rows[0]["aerobic_decoupling_pct"])
+        finally:
+            os.unlink(fit_path)
 
     def test_workout_name_none_for_free_activity(self):
         rows = read_fit_file(self.fit_path)

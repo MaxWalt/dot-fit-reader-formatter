@@ -275,12 +275,35 @@ class TestFitReader(unittest.TestCase):
             expected = round(TEST_LAPS[i]["avg_heart_rate"] - TEST_LAPS[i-1]["avg_heart_rate"], 1)
             self.assertAlmostEqual(rows[i]["hr_drift_bpm"], expected, places=1)
 
-    def test_aerobic_decoupling_present(self):
+    def test_aerobic_decoupling_present_and_consistent(self):
         rows = read_fit_file(self.fit_path)
-        # All rows share the same session-level decoupling value
+        # All rows of a session share the same session-level value
         dec_values = {r["aerobic_decoupling_pct"] for r in rows}
         self.assertEqual(len(dec_values), 1)
         self.assertIsNotNone(list(dec_values)[0])
+
+    def test_aerobic_decoupling_weighted_by_duration(self):
+        """Longer sections should contribute more to the decoupling calculation."""
+        # Two sections: first is short with high EF, second is long with low EF.
+        # Duration-weighted result should be dominated by the long second section.
+        fit_path = build_fit_file([
+            # Short section: high speed/HR → high EF
+            {"elapsed_time":  100.0, "avg_speed": 5.0, "distance": 500.0,
+             "avg_heart_rate": 120},
+            # Long section: same speed, higher HR → lower EF
+            {"elapsed_time": 1000.0, "avg_speed": 5.0, "distance": 5000.0,
+             "avg_heart_rate": 160},
+        ])
+        try:
+            rows = read_fit_file(fit_path)
+            # First half (by time) = section 1 only (100 s < 550 s midpoint)
+            # Second half = section 2 (1000 s)
+            ef1 = (5.0 * 3.6) / 120   # = 0.150
+            ef2 = (5.0 * 3.6) / 160   # = 0.1125
+            expected = round((ef1 - ef2) / ef1 * 100, 2)
+            self.assertAlmostEqual(rows[0]["aerobic_decoupling_pct"], expected, places=1)
+        finally:
+            os.unlink(fit_path)
 
     def test_aerobic_decoupling_none_without_hr(self):
         fit_path = build_fit_file([

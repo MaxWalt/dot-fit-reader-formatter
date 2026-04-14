@@ -182,18 +182,50 @@ def read_fit_file(fit_path: str) -> list[dict]:
         rows.append(row)
 
     # ── Aerobic decoupling (Pa:Hr) ────────────────────────────────────────────
-    # Split all sections into two halves; compare mean efficiency_factor.
-    # Decoupling % = (first_half - second_half) / first_half × 100.
+    # Method: duration-weighted efficiency, split at the 50 % time mark.
+    #
+    #   efficiency_factor (ef) = avg_speed_km_h / avg_hr_bpm  (per section)
+    #   weighted_ef = Σ(ef × time_s) / Σ(time_s)              (per half)
+    #   decoupling % = (first_half_ef - second_half_ef)
+    #                  / first_half_ef × 100
+    #
+    # Splitting by cumulative time (not section count) ensures both halves
+    # represent equal workout duration regardless of lap length variability.
     # Positive = HR rose relative to speed (cardiac drift).
-    ef_values = [r["efficiency_factor"] for r in rows if r["efficiency_factor"] is not None]
-    if len(ef_values) >= 2:
-        mid = len(ef_values) // 2
-        first_mean  = sum(ef_values[:mid]) / mid
-        second_mean = sum(ef_values[mid:]) / len(ef_values[mid:])
-        decoupling  = _r((first_mean - second_mean) / first_mean * 100, 2) \
-            if first_mean != 0 else None
+    # < 5 % is generally considered well-coupled.
+    valid = [(r["efficiency_factor"], r["time_s"])
+             for r in rows
+             if r["efficiency_factor"] is not None and r["time_s"]]
+
+    if len(valid) >= 2:
+        total_time = sum(t for _, t in valid)
+        half_time  = total_time / 2
+
+        first_ef_t  = 0.0
+        first_t     = 0.0
+        second_ef_t = 0.0
+        second_t    = 0.0
+        cumulative  = 0.0
+
+        for ef, t in valid:
+            cumulative += t
+            if cumulative <= half_time:
+                first_ef_t  += ef * t
+                first_t     += t
+            else:
+                second_ef_t += ef * t
+                second_t    += t
+
+        if first_t > 0 and second_t > 0:
+            first_mean  = first_ef_t  / first_t
+            second_mean = second_ef_t / second_t
+            decoupling  = _r((first_mean - second_mean) / first_mean * 100, 2) \
+                if first_mean != 0 else None
+        else:
+            decoupling = None
     else:
         decoupling = None
+
     for row in rows:
         row["aerobic_decoupling_pct"] = decoupling
 

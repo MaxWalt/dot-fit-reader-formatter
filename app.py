@@ -58,15 +58,21 @@ if n_derived > 0:
 # Split sections into two halves; decoupling = drop in efficiency 1st→2nd half.
 # < 5 % = well-coupled (aerobically fit for that effort).
 def compute_decoupling(group: pd.DataFrame) -> float | None:
-    ef = group["efficiency_factor"].dropna()
-    if len(ef) < 2:
+    """Duration-weighted Pa:Hr decoupling, split at the 50 % time mark."""
+    g = group[["efficiency_factor", "time_s"]].dropna()
+    if len(g) < 2:
         return None
-    mid = len(ef) // 2
-    first_half  = ef.iloc[:mid].mean()
-    second_half = ef.iloc[mid:].mean()
-    if first_half == 0:
+    total_time = g["time_s"].sum()
+    cumulative = g["time_s"].cumsum()
+    first  = g[cumulative <= total_time / 2]
+    second = g[cumulative >  total_time / 2]
+    if first.empty or second.empty:
         return None
-    return round((first_half - second_half) / first_half * 100, 2)
+    ef1 = (first["efficiency_factor"]  * first["time_s"]).sum()  / first["time_s"].sum()
+    ef2 = (second["efficiency_factor"] * second["time_s"]).sum() / second["time_s"].sum()
+    if ef1 == 0:
+        return None
+    return round((ef1 - ef2) / ef1 * 100, 2)
 
 # ── Summary cards ──────────────────────────────────────────────────────────────
 st.subheader("Summary")
